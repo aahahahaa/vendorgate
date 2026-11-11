@@ -1,0 +1,74 @@
+[
+  {
+    "vendor_id": "V-0011",
+    "legal_name": "Bharat Steel Fabricators Private Limited",
+    "tax_id": "AABCB1120D",
+    "gstin": "27AABCB1120D1ZJ",
+    "account_number": "50100118830021",
+    "ifsc": "HDFC0000001",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0014",
+    "legal_name": "Om Sai Logistics",
+    "tax_id": "AXRPS4471K",
+    "gstin": "09AXRPS4471K1ZJ",
+    "account_number": "30981124410",
+    "ifsc": "SBIN0000300",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0017",
+    "legal_name": "Lakshmi Packaging Industries LLP",
+    "tax_id": "AAKFL2290M",
+    "gstin": "33AAKFL2290M1Z1",
+    "account_number": "012345678901",
+    "ifsc": "ICIC0000001",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0021",
+    "legal_name": "Sapthagiri Traders",
+    "tax_id": "AAPFS6612R",
+    "gstin": "33AAPFS6612R1ZH",
+    "account_number": "50100234417094",
+    "ifsc": "HDFC0000001",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0023",
+    "legal_name": "Himalaya Office Supplies",
+    "tax_id": "BQEPK3318L",
+    "gstin": "05BQEPK3318L1ZV",
+    "account_number": "38812290114",
+    "ifsc": "SBIN0000300",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0026",
+    "legal_name": "Deccan Electricals Private Limited",
+    "tax_id": "AAECD7781P",
+    "gstin": "36AAECD7781P1ZV",
+    "account_number": "50100661209933",
+    "ifsc": "HDFC0000001",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0030",
+    "legal_name": "Konkan Chemicals Private Limited",
+    "tax_id": "AADCK5530F",
+    "gstin": "27AADCK5530F1ZQ",
+    "account_number": "112233445566",
+    "ifsc": "ICIC0000001",
+    "status": "Active"
+  },
+  {
+    "vendor_id": "V-0032",
+    "legal_name": "Northstar IT Services Private Limited",
+    "tax_id": "AAHCN8812B",
+    "gstin": "29AAHCN8812B1ZG",
+    "account_number": "50100772019284",
+    "ifsc": "HDFC0000001",
+    "status": "Active"
+  }
+]
