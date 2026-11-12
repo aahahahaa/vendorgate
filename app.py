@@ -38,6 +38,19 @@ FIELDS = {"f_legal_name": "vendor.legal_name", "f_trade_name": "vendor.trade_nam
 
 st.markdown(ui.CSS, unsafe_allow_html=True)
 
+# Festive edition: reachable at ?theme=diwali or via the sidebar toggle
+if "festive" not in st.session_state:
+    st.session_state.festive = st.query_params.get("theme") == "diwali"
+if st.session_state.festive:
+    st.markdown(ui.FESTIVE_CSS + ui.festive_decor(), unsafe_allow_html=True)
+
+
+def on_festive_change():
+    if st.session_state.festive:
+        st.query_params["theme"] = "diwali"
+    elif "theme" in st.query_params:
+        del st.query_params["theme"]
+
 
 # ---------------------------------------------------------------- setup
 def secret(name, default=None):
@@ -159,7 +172,8 @@ def static_card(run, animate=False):
     stages, d = run["result"]["stages"], run["result"]["decision"]
     names = [SHORT.get(s["key"], s["name"]) for s in stages]
     rail = ui.rail(names, [ui.node_state(s["worst"]) for s in stages])
-    dec = ui.stamp(d, animate) + ui.counts(stages)
+    animate = animate or ss.pop("celebrate", None) == run["id"]
+    dec = ui.stamp(d, animate, ss.festive) + ui.counts(stages)
     if run["result"].get("review"):
         dec += ui.reviewed_note(run["result"]["review"], run["result"]["auto_decision"])
     st.markdown(ui.card(run["id"], rail, checks_block(stages), dec, live=False), unsafe_allow_html=True)
@@ -194,6 +208,8 @@ def reviewer_panel(run):
             status=status, vendor_requests=[reason.strip()] if choice == "request" else []))
         store.apply_review(run["id"], {"by": by.strip(), "decision": choice, "reason": reason.strip(),
                                        "at": dt.datetime.now().isoformat(timespec="seconds")}, email)
+        if choice == "approve":
+            ss.celebrate = run["id"]
         st.rerun()
 
 
@@ -321,13 +337,14 @@ def live_run(sub, uploads, pacing):
     result = {"stages": stages, "decision": decision}
     saved_id = store.save(sub, result, ss.parent_id, ss.source)
     ss.last_run_id = saved_id
-    draw(decision_html=ui.stamp(decision, animate=True) + ui.counts(stages), live=False)
+    draw(decision_html=ui.stamp(decision, animate=True, festive=ss.festive) + ui.counts(stages), live=False)
     render_decision(store.get(saved_id))
 
 
 # ---------------------------------------------------------------- pages
 def page_new_run():
-    st.markdown(ui.hero("Vendor onboarding", "Vendors, verified <em>before</em> you pay.",
+    st.markdown(ui.hero("शुभ दीपावली · festive edition" if ss.festive else "Vendor onboarding",
+                        "Vendors, verified <em>before</em> you pay.",
                         "Pick a prepared scenario or start blank. Every field can be edited, and "
                         "uploaded documents are read live by AI."), unsafe_allow_html=True)
 
@@ -519,6 +536,8 @@ with st.sidebar:
     page = st.radio("Go to", ["New submission", "Dashboard", "How it decides"],
                     label_visibility="collapsed")
     st.divider()
+    st.toggle("Festive edition 🪔", key="festive", on_change=on_festive_change,
+              help="Diwali theme: same checks and rules, dressed for the season")
     st.toggle("Demo pacing", value=True, key="pacing_on",
               help="Adds a short pause per stage so viewers can follow the run")
     ss["pacing"] = 0.4 if ss.get("pacing_on", True) else 0.0
