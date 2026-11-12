@@ -62,6 +62,7 @@ def secret(name, default=None):
 
 GEMINI_KEY = secret("GEMINI_API_KEY")
 GEMINI_MODEL = secret("GEMINI_MODEL", llm.DEFAULT_MODEL)
+llm.FALLBACK_MODEL = secret("GEMINI_FALLBACK_MODEL")
 
 
 @st.cache_data
