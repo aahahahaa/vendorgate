@@ -95,6 +95,12 @@ CSS = """
 .vg-review h4{margin:0 0 4px;font-size:1rem}.vg-review p{color:var(--vg-muted);font-size:.86rem;margin:0}
 .vg-reviewed{font-size:.84rem;color:var(--vg-muted);margin:10px 0 0;border-top:1px solid var(--vg-border);padding-top:10px}
 .vg-reviewed b{color:var(--vg-text)}
+.vg-ai{border:1px solid var(--vg-border);border-radius:12px;padding:10px 12px;font-size:.8rem;display:flex;flex-direction:column;gap:3px;margin-top:6px}
+.vg-ai b{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--vg-text)}
+.vg-ai b i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.vg-ai.ok b i{background:var(--vg-ok)}.vg-ai.warn b i{background:var(--vg-warn)}.vg-ai.bad b i{background:var(--vg-bad)}
+.vg-ai.bad{border-color:rgba(248,113,113,.45)}
+.vg-ai span{color:var(--vg-muted);line-height:1.45}.vg-ai .m{font-family:var(--vg-mono);font-size:.68rem;opacity:.8}
 @keyframes vg-ping{0%{transform:scale(1);opacity:.75}100%{transform:scale(2.5);opacity:0}}
 @keyframes vg-blink{0%,100%{opacity:1}50%{opacity:.25}}
 @keyframes vg-rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
