@@ -136,6 +136,37 @@ def on_gstin_change():
     ss.autofill_note = f"Filled from {src}: {', '.join(filled)}" if filled else None
 
 
+def reset_time_ist():
+    """Free-tier daily quota resets at midnight Pacific time; show it in IST."""
+    from zoneinfo import ZoneInfo
+    pt = dt.datetime.now(ZoneInfo("America/Los_Angeles"))
+    nxt = (pt + dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return nxt.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%-I:%M %p IST")
+
+
+def ai_status_html():
+    if not GEMINI_KEY:
+        kind, title, body = "warn", "AI reading not configured", "Prepared scenarios still run every check."
+    else:
+        state, at = llm.STATUS["state"], llm.STATUS["at"]
+        ago = f" · {int((time.time() - at) // 60)} min ago" if at else ""
+        if state == "quota" and not llm.quota_active():
+            state = "unused"
+        if state == "quota":
+            kind, title = "bad", "AI reading paused"
+            body = (f"Today’s free Gemini quota is used up{ago}. It resets around {reset_time_ist()}. "
+                    "Prepared scenarios and every other check still work.")
+        elif state == "busy":
+            kind, title = "warn", "AI reading busy"
+            body = f"Gemini was overloaded on the last try{ago}. Uploads retry automatically."
+        elif state == "ok":
+            kind, title, body = "ok", "AI reading available", f"Last document read{ago}."
+        else:
+            kind, title, body = "ok", "AI reading ready", "Free tier: a limited number of reads per day."
+    return (f"<div class='vg-ai {kind}'><b><i></i>{title}</b><span>{body}</span>"
+            f"<span class='m'>{GEMINI_MODEL}</span></div>")
+
+
 def show_hint(h):
     kind, msg = h
     if kind:
@@ -403,6 +434,10 @@ def page_new_run():
         st.caption("This scenario comes with sample documents that were read in advance, so the "
                    "demo is quick and repeatable. Upload your own file to have AI read it live, "
                    "or remove a sample to see what happens when a document is missing.")
+    if llm.quota_active():
+        st.markdown(ui.hint("warn", f"AI reading is paused until about {reset_time_ist()} (free daily "
+                                    "quota used up). Uploaded files can’t be read right now; the "
+                                    "attached samples work as normal."), unsafe_allow_html=True)
     uploads = []
     doc_cols = st.columns(len(pack_docs), gap="large")
     for col, (slot, label) in zip(doc_cols, pack_docs.items()):
@@ -542,6 +577,6 @@ with st.sidebar:
     st.toggle("Demo pacing", value=True, key="pacing_on",
               help="Adds a short pause per stage so viewers can follow the run")
     ss["pacing"] = 0.4 if ss.get("pacing_on", True) else 0.0
-    st.caption(f"AI document reading: {'connected (' + GEMINI_MODEL + ')' if GEMINI_KEY else 'not configured'}")
+    st.markdown(ai_status_html(), unsafe_allow_html=True)
 
 {"New submission": page_new_run, "Dashboard": page_dashboard, "How it decides": page_how}[page]()
