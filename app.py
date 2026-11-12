@@ -10,8 +10,11 @@ from pathlib import Path
 
 import streamlit as st
 
-from vendorgate import llm, store, ui
-from vendorgate.pipeline import RULE_PACKS, STAGES, run_all, run_pipeline, to_dict
+from types import SimpleNamespace
+
+from vendorgate import intake, llm, store, ui
+from vendorgate import validators as V
+from vendorgate.pipeline import RULE_PACKS, STAGES, draft_vendor_email, run_all, run_pipeline, to_dict
 
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="VendorGate", page_icon="🛡️", layout="wide")
@@ -97,7 +100,32 @@ def load_submission(sub, parent_id=None, source="manual"):
     ss.parent_id, ss.source = parent_id, source
     ss.form_ver += 1
     ss.removed_docs = set()
+    ss.autofill_note = None
     ss.last_run_id = None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def ifsc_cached(code):
+    return V.ifsc_lookup(code)
+
+
+def on_gstin_change():
+    """Smart intake: a valid GSTIN fills PAN, state and (from the registry) legal name."""
+    info = intake.gstin_lookup(ss.get("f_gstin"), REGISTRY)
+    filled = []
+    for key, field, label in [("f_legal_name", "legal_name", "legal name"), ("f_pan", "pan", "PAN"),
+                              ("f_state", "state", "state")]:
+        if info.get(field) and not (ss.get(key) or "").strip():
+            ss[key] = info[field]
+            filled.append(label)
+    src = "GSTIN and GST registry" if "legal name" in filled else "GSTIN"
+    ss.autofill_note = f"Filled from {src}: {', '.join(filled)}" if filled else None
+
+
+def show_hint(h):
+    kind, msg = h
+    if kind:
+        st.markdown(ui.hint(kind, msg), unsafe_allow_html=True)
 
 
 def on_country_change():
@@ -132,11 +160,47 @@ def static_card(run, animate=False):
     names = [SHORT.get(s["key"], s["name"]) for s in stages]
     rail = ui.rail(names, [ui.node_state(s["worst"]) for s in stages])
     dec = ui.stamp(d, animate) + ui.counts(stages)
+    if run["result"].get("review"):
+        dec += ui.reviewed_note(run["result"]["review"], run["result"]["auto_decision"])
     st.markdown(ui.card(run["id"], rail, checks_block(stages), dec, live=False), unsafe_allow_html=True)
+
+
+REVIEW_LABELS = {"approve": "Approve", "request": "Ask vendor for more", "reject": "Reject"}
+
+
+def reviewer_panel(run):
+    st.markdown("<div class='vg-review'><h4>Your decision is needed</h4><p>The checks found "
+                "contradictions that a rule can’t settle. Review the evidence above, then decide. "
+                "Your name and reason are saved to the audit trail.</p></div>", unsafe_allow_html=True)
+    with st.form(key=f"review_{run['id']}"):
+        c1, c2 = st.columns([1, 2])
+        by = c1.text_input("Reviewer name", placeholder="Priya (Procurement)")
+        choice = c2.radio("Decision", list(REVIEW_LABELS), horizontal=True,
+                          format_func=REVIEW_LABELS.get)
+        reason = st.text_area("Reason", height=90,
+                              placeholder="Called the vendor: they have a second GSTIN for Karnataka "
+                                          "and will share it.",
+                              help="If you ask the vendor for more, this text goes into their email")
+        submitted = st.form_submit_button("Record decision", type="primary")
+    if submitted:
+        if not by.strip():
+            st.error("Enter your name so the decision can be traced")
+            return
+        if len(reason.strip()) < 15:
+            st.error("Write a reason of at least 15 characters so the decision can be audited")
+            return
+        status = {"approve": "Approved", "request": "Pending", "reject": "Rejected"}[choice]
+        email = draft_vendor_email(run["submission"], SimpleNamespace(
+            status=status, vendor_requests=[reason.strip()] if choice == "request" else []))
+        store.apply_review(run["id"], {"by": by.strip(), "decision": choice, "reason": reason.strip(),
+                                       "at": dt.datetime.now().isoformat(timespec="seconds")}, email)
+        st.rerun()
 
 
 def render_decision(run):
     d = run["result"]["decision"]
+    if d["route"] == "Internal review" and not run["result"].get("review"):
+        reviewer_panel(run)
     left, right = st.columns([1, 1], gap="large")
     with left:
         st.markdown(ui.section("Why"), unsafe_allow_html=True)
@@ -153,7 +217,7 @@ def render_decision(run):
         tag = " · AI-polished, review before sending" if d.get("email_polished") else ""
         st.markdown(ui.section("Email to vendor" + tag), unsafe_allow_html=True)
         st.text_area("Email to vendor", d.get("vendor_email") or "", height=250,
-                     key=f"email_{run['id']}", label_visibility="collapsed")
+                     key=f"email_{run['id']}_{d['status']}_{d['route']}", label_visibility="collapsed")
 
     if d["status"] == "Pending":
         b1, b2, _ = st.columns([1.3, 1.8, 1.8])
@@ -286,21 +350,32 @@ def page_new_run():
         st.text_input("Registered address", key="f_address")
         st.text_input("State", key="f_state")
         st.text_input("Contact email", key="f_email")
+        show_hint(intake.hint_email(ss.get("f_email"), ss.get("f_entity_type")))
     with col_b:
         st.markdown(ui.section("Tax registration"), unsafe_allow_html=True)
         if country == "IN":
+            st.text_input("GSTIN", key="f_gstin", on_change=on_gstin_change,
+                          help="Enter this first: PAN, state and legal name fill in automatically")
+            show_hint(intake.hint_gstin(ss.get("f_gstin"), ss.get("f_pan"), ss.get("f_state"), REGISTRY))
+            if ss.get("autofill_note"):
+                st.markdown(f"<div class='vg-fill-note'>✦ {ss.autofill_note}</div>", unsafe_allow_html=True)
             st.text_input("PAN", key="f_pan", help="10 characters, e.g. AAACN4821K")
-            st.text_input("GSTIN", key="f_gstin", help="15 characters, e.g. 27AAACN4821K1ZF")
+            show_hint(intake.hint_pan(ss.get("f_pan"), ss.get("f_entity_type")))
         else:
             st.text_input("EIN", key="f_ein", help="Format 12-3456789")
+            show_hint(intake.hint_ein(ss.get("f_ein")))
     with col_c:
         st.markdown(ui.section("Bank account"), unsafe_allow_html=True)
         st.text_input("Account holder name", key="f_holder")
+        show_hint(intake.hint_holder(ss.get("f_holder"), ss.get("f_legal_name")))
         st.text_input("Account number", key="f_account")
+        show_hint(intake.hint_account(ss.get("f_account")))
         if country == "IN":
             st.text_input("IFSC", key="f_ifsc")
+            show_hint(intake.hint_ifsc(ss.get("f_ifsc"), ifsc_cached))
         else:
             st.text_input("SWIFT / BIC", key="f_swift")
+            show_hint(intake.hint_swift(ss.get("f_swift"), country))
 
     st.markdown(ui.section("Documents"), unsafe_allow_html=True)
     pack_docs = RULE_PACKS[country]["documents"]
@@ -363,8 +438,10 @@ def page_dashboard():
     m[3].metric("Waiting on our team", sum(r["route"] == "Internal review" for r in runs))
     m[4].metric("Rejected", statuses.count("Rejected"))
 
-    flt = st.segmented_control("Show", ["All", "Approved", "Pending", "Rejected"], default="All")
-    shown = [r for r in runs if flt in (None, "All") or r["status"] == flt]
+    flt = st.segmented_control("Show", ["All", "Needs review", "Approved", "Pending", "Rejected"],
+                               default="All")
+    shown = [r for r in runs if flt in (None, "All") or r["status"] == flt
+             or (flt == "Needs review" and r["route"] == "Internal review")]
 
     def flags(r, sev):
         return sum(c["severity"] == sev for s in r["result"]["stages"] for c in s["checks"])
@@ -372,7 +449,8 @@ def page_dashboard():
     table = [{"Run": r["id"], "When": r["created"].replace("T", " "), "Vendor": r["vendor"],
               "Country": r["country"], "Status": r["status"], "Next step": r["route"],
               "Blocking": flags(r, "block"), "For review": flags(r, "review"),
-              "Vendor fixes": flags(r, "fix"), "Resubmission of": r["parent_id"] or ""}
+              "Vendor fixes": flags(r, "fix"), "Resubmission of": r["parent_id"] or "",
+              "Reviewed by": (r["result"].get("review") or {}).get("by", "")}
              for r in shown]
     if not table:
         st.info("No runs match this filter. Start one from New submission.")
@@ -396,6 +474,11 @@ def page_how():
     st.markdown("""
 The AI model only reads documents and drafts emails. Every status comes from written rules,
 so every decision can be traced back to evidence.
+
+**Built to make onboarding simpler**
+
+- **Smart intake:** type a GSTIN and the PAN, state and legal name fill in automatically. Every field checks itself as you type (GSTIN check digit, live IFSC bank lookup, name match), so mistakes are caught before submitting, not after a review cycle.
+- **Reviewer decisions:** cases the rules can’t settle go to a person, who approves, asks the vendor for more, or rejects with a written reason. The automated result and the human decision are both kept in the audit trail.
 
 **The pipeline**
 
