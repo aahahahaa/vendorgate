@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from vendorgate import llm, store
+from vendorgate import llm, store, ui
 from vendorgate.pipeline import RULE_PACKS, STAGES, run_all, run_pipeline, to_dict
 
 ROOT = Path(__file__).parent
@@ -33,15 +33,7 @@ FIELDS = {"f_legal_name": "vendor.legal_name", "f_trade_name": "vendor.trade_nam
           "f_ein": "tax.ein", "f_holder": "bank.account_holder",
           "f_account": "bank.account_number", "f_ifsc": "bank.ifsc", "f_swift": "bank.swift"}
 
-st.markdown("""<style>
-.block-container {padding-top: 2rem; max-width: 1200px;}
-.stamp {display:inline-block; padding:.35rem 1.1rem; border:3px solid; border-radius:6px;
-        font-weight:800; font-size:1.7rem; letter-spacing:.12em; transform:rotate(-3deg);
-        margin:.4rem 0 .6rem 0;}
-.route {font-size:1.05rem; margin-bottom:.4rem;}
-.chk {margin:.15rem 0;}
-.ev {color:#5B6676; font-size:.85rem; margin:0 0 .35rem 1.7rem;}
-</style>""", unsafe_allow_html=True)
+st.markdown(ui.CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- setup
@@ -123,46 +115,48 @@ if "f_legal_name" not in ss:
 
 
 # ---------------------------------------------------------------- rendering helpers
-def render_checks(checks):
-    for c in checks:
-        st.markdown(f"<div class='chk'>{ICON[c['severity']]} <b>{c['label']}</b>: "
-                    f"{c['message']}</div>", unsafe_allow_html=True)
-        ev = {k: v for k, v in (c.get("evidence") or {}).items()
-              if isinstance(v, (str, int, float)) and k not in ("source",)}
-        if ev and c["severity"] in ("fix", "review", "block"):
-            st.markdown("<div class='ev'>" + " &nbsp;|&nbsp; ".join(
-                f"{k.replace('_', ' ')}: <code>{v}</code>" for k, v in ev.items()) + "</div>",
-                unsafe_allow_html=True)
+SHORT = {"intake": "Intake", "completeness": "Complete", "documents": "Docs", "format": "Format",
+         "crossref": "Cross-ref", "external": "Verify", "risk": "Risk"}
+
+
+def checks_block(stages, new_key=None):
+    out = []
+    for s in stages:
+        out.append(f"<div class='vg-stage'>{SHORT.get(s['key'], s['name'])}</div>")
+        out += [ui.check_html(c, new=(s["key"] == new_key)) for c in s["checks"]]
+    return "".join(out)
+
+
+def static_card(run, animate=False):
+    stages, d = run["result"]["stages"], run["result"]["decision"]
+    names = [SHORT.get(s["key"], s["name"]) for s in stages]
+    rail = ui.rail(names, [ui.node_state(s["worst"]) for s in stages])
+    dec = ui.stamp(d, animate) + ui.counts(stages)
+    st.markdown(ui.card(run["id"], rail, checks_block(stages), dec, live=False), unsafe_allow_html=True)
 
 
 def render_decision(run):
     d = run["result"]["decision"]
-    sub_route = d["route"] if d["status"] == "Pending" else ""
-    color, word = STAMP[(d["status"], sub_route)]
-    st.markdown(f"<div class='stamp' style='color:{color};border-color:{color}'>{word}</div>"
-                f"<div class='route'>Next: <b>{d['route']}</b></div>", unsafe_allow_html=True)
-    st.caption(d["internal_summary"])
-
     left, right = st.columns([1, 1], gap="large")
     with left:
-        st.markdown("**Why**")
+        st.markdown(ui.section("Why"), unsafe_allow_html=True)
         for r in d["reasons"]:
             st.markdown(f"- {r}")
         if run.get("parent_id"):
             parent = store.get(run["parent_id"])
             if parent:
-                st.markdown(f"**What changed since {run['parent_id']}**")
+                st.markdown(ui.section(f"What changed since {run['parent_id']}"), unsafe_allow_html=True)
                 for ch in diff(parent["result"]["stages"], run["result"]["stages"]):
                     st.markdown(f"- {ch['check']}: {ICON.get(ch['before'], '–')} → "
                                 f"{ICON.get(ch['after'], '–')}")
     with right:
-        tag = " (AI-polished, please review)" if d.get("email_polished") else ""
-        st.markdown(f"**Email to vendor**{tag}")
-        st.text_area("Email to vendor", d.get("vendor_email") or "", height=260,
+        tag = " · AI-polished, review before sending" if d.get("email_polished") else ""
+        st.markdown(ui.section("Email to vendor" + tag), unsafe_allow_html=True)
+        st.text_area("Email to vendor", d.get("vendor_email") or "", height=250,
                      key=f"email_{run['id']}", label_visibility="collapsed")
 
     if d["status"] == "Pending":
-        b1, b2, _ = st.columns([1.3, 1.6, 2])
+        b1, b2, _ = st.columns([1.3, 1.8, 1.8])
         b1.button("Edit and resubmit", key=f"resub_{run['id']}", on_click=load_submission,
                   args=(run["submission"], run["id"], run["source"]),
                   help="Load this submission into the form as the vendor's next attempt")
@@ -186,88 +180,92 @@ def diff(old_stages, new_stages):
     return out
 
 
-def stage_icon(worst):
-    return "✅" if worst in ("info", "pass") else ICON[worst]
-
-
 def render_stages_static(stages):
     for s in stages:
-        with st.expander(f"{stage_icon(s['worst'])} {s['name']}  ({s['duration_ms']} ms)",
-                         expanded=s["worst"] in ("fix", "review", "block")):
-            render_checks(s["checks"])
+        icon = "✅" if s["worst"] in ("info", "pass", "skip") else ICON[s["worst"]]
+        with st.expander(f"{icon} {s['name']}  ({s['duration_ms']} ms)"):
+            st.markdown("".join(ui.check_html(c) for c in s["checks"]), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- live run
 def live_run(sub, uploads, pacing):
-    st.subheader("Live run")
-    n_total = len(STAGES) + 2 + (1 if uploads else 0)
-    bar = st.progress(0.0, text="Starting")
-    step = 0
+    run_id = f"RUN-{store.count() + 1:04d}"
+    names = (["AI read"] if uploads else []) + [SHORT[k] for k, _, _ in STAGES]
+    states = [None] * len(names)
+    offset = 1 if uploads else 0
+    stages, ai_lines = [], []
+    box = st.empty()
 
+    def draw(active=None, new_key=None, decision_html=None, live=True):
+        ai = ""
+        if ai_lines:
+            ai = "<div class='vg-stage'>AI read</div>" + "".join(ai_lines)
+        body = ai + checks_block(stages, new_key)
+        box.markdown(ui.card(run_id, ui.rail(names, states, active), body or
+                             "<div class='vg-wait'>Starting…</div>",
+                             decision_html or "<div class='vg-wait'>Running checks…</div>", live),
+                     unsafe_allow_html=True)
+
+    draw(active=0)
     if uploads:
-        with st.status("Reading uploaded documents with AI", expanded=True) as box:
-            for slot, up in uploads:
-                st.write(f"Reading **{up.name}** as {RULE_PACKS[sub['vendor']['country']]['documents'][slot]}")
-                if not GEMINI_KEY:
-                    doc = {"slot": slot, "file": up.name,
-                           "error": "AI reading is not configured (no GEMINI_API_KEY)"}
-                else:
-                    doc = llm.extract_document(up.getvalue(), up.name, slot, GEMINI_KEY, GEMINI_MODEL)
-                sub["documents"] = [d for d in sub["documents"] if d["slot"] != slot] + [doc]
-                if doc.get("error"):
-                    st.write(f"🟠 Could not read: {doc['error']}")
-                else:
-                    st.write(f"Looks like a **{doc['detected_type']}** "
-                             f"({doc['confidence']:.0%} confidence): {doc.get('notes', '')}")
-                    st.json(doc["fields"], expanded=False)
-            box.update(label="Read uploaded documents with AI", state="complete", expanded=False)
-        step += 1
-        bar.progress(step / n_total, text="Documents read")
+        worst = "pass"
+        for slot, up in uploads:
+            label = RULE_PACKS[sub["vendor"]["country"]]["documents"][slot]
+            ai_lines.append(ui.check_html({"id": "ai", "severity": "info", "label": f"Reading {up.name}",
+                                           "message": f"as {label}…"}, new=True))
+            draw(active=0)
+            if not GEMINI_KEY:
+                doc = {"slot": slot, "file": up.name, "error": "AI reading is not configured"}
+            else:
+                doc = llm.extract_document(up.getvalue(), up.name, slot, GEMINI_KEY, GEMINI_MODEL)
+            sub["documents"] = [d for d in sub["documents"] if d["slot"] != slot] + [doc]
+            if doc.get("error"):
+                worst = "warn"
+                line = {"id": "ai", "severity": "review", "label": up.name,
+                        "message": f"could not be read: {doc['error']}"}
+            else:
+                kind = doc["detected_type"].replace("_", " ") if doc.get("detected_type") else "unknown"
+                line = {"id": "ai", "severity": "pass", "label": up.name,
+                        "message": f"looks like a {kind} ({doc['confidence']:.0%} confidence), "
+                                   f"{len(doc['fields'])} fields read"}
+            ai_lines[-1] = ui.check_html(line, new=True)
+            draw(active=0)
+        states[0] = worst
 
-    stages = []
     decision = None
-    for kind, obj in run_pipeline(sub, MASTER, REGISTRY, TODAY):
-        if kind == "stage":
-            sd = {**asdict(obj), "worst": obj.worst}
-            stages.append(sd)
-            with st.status(f"{obj.name}", expanded=True) as box:
-                time.sleep(pacing)
-                render_checks(sd["checks"])
-                box.update(label=f"{stage_icon(obj.worst)} {obj.name}  ({obj.duration_ms} ms)",
-                           state="error" if obj.worst == "block" else "complete",
-                           expanded=obj.worst in ("fix", "review", "block"))
-            step += 1
-            bar.progress(step / n_total, text=obj.name)
-        else:
-            decision = asdict(obj)
-
-    with st.status("Decision engine", expanded=False) as box:
+    gen = run_pipeline(sub, MASTER, REGISTRY, TODAY)
+    i = 0
+    while True:
+        draw(active=offset + i if offset + i < len(names) else None)
         time.sleep(pacing)
-        st.write(f"{decision['status']} → {decision['route']}")
-        box.update(label=f"Decision: {decision['status']} ({decision['route']})", state="complete")
-    step += 1
-    bar.progress(step / n_total, text="Decision made")
+        kind, obj = next(gen)
+        if kind == "decision":
+            decision = asdict(obj)
+            break
+        sd = {**asdict(obj), "worst": obj.worst}
+        stages.append(sd)
+        states[offset + i] = ui.node_state(obj.worst)
+        draw(active=None, new_key=sd["key"])
+        i += 1
 
     decision["email_polished"] = False
-    with st.status("Drafting vendor email", expanded=False) as box:
-        if GEMINI_KEY and decision["status"] == "Pending" and decision["vendor_requests"]:
-            decision["vendor_email"], decision["email_polished"] = llm.polish_email(
-                decision["vendor_email"], GEMINI_KEY, GEMINI_MODEL)
-        box.update(label="Vendor email drafted" + (" with AI" if decision["email_polished"] else
-                                                    " from template"), state="complete")
-    bar.progress(1.0, text="Done")
+    draw(decision_html="<div class='vg-wait'>Deciding and drafting the vendor email…</div>")
+    if GEMINI_KEY and decision["status"] == "Pending" and decision["vendor_requests"]:
+        decision["vendor_email"], decision["email_polished"] = llm.polish_email(
+            decision["vendor_email"], GEMINI_KEY, GEMINI_MODEL)
 
     result = {"stages": stages, "decision": decision}
-    run_id = store.save(sub, result, ss.parent_id, ss.source)
-    ss.last_run_id = run_id
-    st.divider()
-    render_decision(store.get(run_id))
+    saved_id = store.save(sub, result, ss.parent_id, ss.source)
+    ss.last_run_id = saved_id
+    draw(decision_html=ui.stamp(decision, animate=True) + ui.counts(stages), live=False)
+    render_decision(store.get(saved_id))
 
 
 # ---------------------------------------------------------------- pages
 def page_new_run():
-    st.title("New vendor submission")
-    st.write("Pick a prepared scenario or start blank. Every field can be edited before running.")
+    st.markdown(ui.hero("Vendor onboarding", "Vendors, verified <em>before</em> you pay.",
+                        "Pick a prepared scenario or start blank. Every field can be edited, and "
+                        "uploaded documents are read live by AI."), unsafe_allow_html=True)
 
     c1, c2 = st.columns([2, 1])
     options = ["blank"] + list(SCENARIOS)
@@ -279,7 +277,7 @@ def page_new_run():
     country = ss.get("f_country", "IN")
     col_a, col_b, col_c = st.columns(3, gap="large")
     with col_a:
-        st.markdown("**Company**")
+        st.markdown(ui.section("Company"), unsafe_allow_html=True)
         st.text_input("Legal name", key="f_legal_name")
         st.text_input("Trade name (optional)", key="f_trade_name")
         st.selectbox("Country", ["IN", "US"], key="f_country", on_change=on_country_change,
@@ -289,14 +287,14 @@ def page_new_run():
         st.text_input("State", key="f_state")
         st.text_input("Contact email", key="f_email")
     with col_b:
-        st.markdown("**Tax registration**")
+        st.markdown(ui.section("Tax registration"), unsafe_allow_html=True)
         if country == "IN":
             st.text_input("PAN", key="f_pan", help="10 characters, e.g. AAACN4821K")
             st.text_input("GSTIN", key="f_gstin", help="15 characters, e.g. 27AAACN4821K1ZF")
         else:
             st.text_input("EIN", key="f_ein", help="Format 12-3456789")
     with col_c:
-        st.markdown("**Bank account**")
+        st.markdown(ui.section("Bank account"), unsafe_allow_html=True)
         st.text_input("Account holder name", key="f_holder")
         st.text_input("Account number", key="f_account")
         if country == "IN":
@@ -304,7 +302,7 @@ def page_new_run():
         else:
             st.text_input("SWIFT / BIC", key="f_swift")
 
-    st.markdown("**Documents**")
+    st.markdown(ui.section("Documents"), unsafe_allow_html=True)
     pack_docs = RULE_PACKS[country]["documents"]
     template_docs = {d["slot"]: d for d in ss.template_docs
                      if d["slot"] in pack_docs and d["slot"] not in ss.removed_docs}
@@ -348,14 +346,14 @@ def page_new_run():
         live_run(sub, uploads, ss.get("pacing", 0.4))
     elif ss.last_run_id:
         run = store.get(ss.last_run_id)
-        st.subheader(f"Result of {run['id']}")
-        render_stages_static(run["result"]["stages"])
-        st.divider()
+        static_card(run)
         render_decision(run)
 
 
 def page_dashboard():
-    st.title("Dashboard")
+    st.markdown(ui.hero("Audit trail", "Every decision, <em>with</em> its evidence.",
+                        "Each run is stored with what was checked, what was found and why it "
+                        "ended where it did."), unsafe_allow_html=True)
     runs = store.all_runs()
     statuses = [r["status"] for r in runs]
     m = st.columns(5)
@@ -384,18 +382,18 @@ def page_dashboard():
     pick = st.selectbox("Open a run", [r["id"] for r in shown],
                         format_func=lambda i: f"{i}: " + next(r["vendor"] for r in shown if r["id"] == i))
     run = store.get(pick)
-    st.subheader(f"{run['id']}: {run['vendor']}")
+    static_card(run)
     render_decision(run)
-    st.markdown("**Audit trail**")
+    st.markdown(ui.section("Stage details"), unsafe_allow_html=True)
     render_stages_static(run["result"]["stages"])
     with st.expander("Raw submission"):
         st.json(run["submission"], expanded=False)
 
 
 def page_how():
-    st.title("How VendorGate decides")
+    st.markdown(ui.hero("How it decides", "AI reads, rules <em>decide</em>.",
+                        "People own the grey zone."), unsafe_allow_html=True)
     st.markdown("""
-**AI reads, rules decide, people own the grey zone.**
 The AI model only reads documents and drafts emails. Every status comes from written rules,
 so every decision can be traced back to evidence.
 
