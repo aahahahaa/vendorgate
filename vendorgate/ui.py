@@ -183,11 +183,12 @@ def check_html(c, new=False):
             f"<div><b>{escape(c['label'])}</b> <span class='m'>· {escape(c['message'])}</span>{extra}</div></div>")
 
 
-def stamp(decision, animate):
+def stamp(decision, animate, festive=False):
     route = decision["route"] if decision["status"] == "Pending" else ""
     color, word = STAMP_STYLE[(decision["status"], route)]
     a = " anim" if animate else ""
-    return (f"<div class='vg-stampwrap'><span class='vg-ripple{a}' style='border-color:{color}'></span>"
+    party = celebration() if (festive and animate and decision["status"] == "Approved") else ""
+    return (f"<div class='vg-stampwrap'>{party}<span class='vg-ripple{a}' style='border-color:{color}'></span>"
             f"<div class='vg-stamp{a}' style='color:{color};border-color:{color}'>{word}</div></div>"
             f"<p class='vg-next'>Next: <b>{escape(decision['route'])}</b></p>")
 
@@ -223,3 +224,112 @@ def reviewed_note(review, auto):
     return (f"<div class='vg-reviewed'>Reviewed by <b>{escape(review['by'])}</b> · {verb}<br>"
             f"“{escape(review['reason'])}”<br>Automated result was {escape(auto['status'])} "
             f"({escape(auto['route'])})</div>")
+
+
+# ================================================================ festive edition (Diwali)
+import math as _m
+
+FESTIVE_GOLD, FESTIVE_COLORS = "#FFC93C", ["#FFC93C", "#FF7A59", "#F5E1A4", "#E86FA8", "#7FD1FF"]
+
+FESTIVE_CSS_TEMPLATE = """
+<style>
+:root{--vg-accent:#FFC93C;--vg-card:#1E1233;--vg-card2:#271843;--vg-border:#3D2A57;--vg-muted:#B9A98A;--vg-text:#F3E9D2}
+.stApp{background:radial-gradient(1100px 520px at 50% -8%,#2D1650 0%,#140B24 62%) fixed}
+[data-testid="stHeader"]{background:transparent}
+[data-testid="stSidebar"]{background:#1A0F2E}
+[data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div{background:#1E1233!important;border-color:#3D2A57!important}
+input,textarea{background:transparent!important}
+.stButton button[kind="primary"],[data-testid="stFormSubmitButton"] button{background:#FFC93C!important;color:#3A2400!important;border:none!important}
+.stButton button[kind="primary"]:hover{box-shadow:0 0 0 4px rgba(255,201,60,.22)!important}
+.block-container{padding-bottom:110px}
+.vg-hero em{color:#FFC93C}
+.vg-eyebrow{border-color:#5A4220}
+.vg-node.pass{border-color:#FFC93C;background:rgba(255,201,60,.14);color:#FFC93C}
+.vg-node.active,.vg-node.active::before,.vg-node.active::after{border-color:#FFC93C}
+.vg-fill{background:#FFC93C}
+.vg-ic.pass{background:rgba(255,201,60,.16);color:#FFC93C}
+.vg-hint.ok{color:#FFD873}
+.vg-fill-note{color:#FFC93C;border-color:rgba(255,201,60,.4);background:rgba(255,201,60,.08)}
+.vg-live,.vg-live i{color:#FFC93C}.vg-live i{background:#FFC93C}
+.vg-card:hover,[data-testid="stExpander"] details:hover,[data-testid="stMetric"]:hover{border-color:rgba(255,201,60,.55)!important;box-shadow:0 0 30px rgba(255,201,60,.12)!important}
+.vg-stamp{outline:3px dotted #FF922B;outline-offset:6px}
+
+/* decorations: fixed, behind nothing clickable */
+.fx{position:fixed;pointer-events:none;z-index:999990}
+.fx-toran{top:0;left:0;right:0;height:46px}
+.fx-string{position:absolute;left:-2%;right:-2%;top:-30px;height:58px;border-bottom:1.5px solid #8C6A2F;border-radius:0 0 50% 50%}
+.fx-bulb{position:absolute;width:8px;height:8px;border-radius:50%;animation:fx-tw 1.6s ease-in-out infinite}
+.fx-mari{width:64px;height:64px;border-radius:50%;animation:fx-spin 40s linear infinite;
+  background:radial-gradient(circle,#7A3E00 0 13%,transparent 14%),
+  radial-gradient(circle,transparent 0 13%,#FFC93C 14% 34%,transparent 35%),
+  repeating-conic-gradient(#E8590C 0 9deg,#FF922B 9deg 18deg);
+  -webkit-mask:radial-gradient(circle,#000 62%,transparent 63%),repeating-conic-gradient(#000 0 9deg,transparent 9deg 18deg);
+  mask:radial-gradient(circle,#000 62%,transparent 63%),repeating-conic-gradient(#000 0 9deg,transparent 9deg 18deg)}
+.fx-diyas{bottom:10px;left:0;right:0;display:flex;justify-content:space-around;padding:0 4%}
+.fx-diya{display:flex;flex-direction:column;align-items:center}
+.fx-flame{width:9px;height:16px;background:#FFC93C;border-radius:50% 50% 50% 50%/62% 62% 38% 38%;transform-origin:bottom;
+  animation:fx-flame 2.7s ease-in-out infinite;box-shadow:0 -2px 12px rgba(255,201,60,.55)}
+.fx-lamp{width:38px;height:15px;background:#C2410C;border-radius:0 0 50% 50%/0 0 100% 100%;border-top:2px solid #FFC93C;margin-top:1px}
+.fx-ray{position:absolute;width:0;height:0}
+.fx-spark{position:absolute;left:0;top:-2px;width:4px;height:4px;border-radius:50%;opacity:0}
+.vg-celebrate{position:absolute;inset:0;pointer-events:none}
+@keyframes fx-tw{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes fx-spin{to{transform:rotate(360deg)}}
+@keyframes fx-flame{0%,100%{opacity:.25;transform:scaleY(.6)}50%{opacity:1;transform:scaleY(1)}}
+__SPARK_KEYFRAMES__
+@media (prefers-reduced-motion:reduce){.fx *,.vg-celebrate *{animation:none!important}.fx-bg,.vg-celebrate{display:none}}
+@media (max-width:760px){.fx-mari{width:44px;height:44px}.fx-diya:nth-child(n+6){display:none}}
+</style>
+"""
+
+
+SPARK_DIST = (45, 55, 65, 75, 90)
+
+
+def _spark_keyframes():
+    out = []
+    for d in SPARK_DIST:
+        out.append(f".fx-bg .fx-spark.d{d}{{animation:fx-loop{d} 20s ease-out infinite both}}"
+                   f".vg-celebrate .fx-spark.d{d}{{animation:fx-once{d} 1.3s ease-out both}}"
+                   f"@keyframes fx-loop{d}{{0%{{opacity:0;transform:translateX(0)}}.4%{{opacity:1;transform:translateX(0)}}"
+                   f"6%{{opacity:0;transform:translateX({d}px)}}100%{{opacity:0;transform:translateX({d}px)}}}}"
+                   f"@keyframes fx-once{d}{{0%{{opacity:0;transform:translateX(0)}}8%{{opacity:1}}"
+                   f"100%{{opacity:0;transform:translateX({d}px)}}}}")
+    return "\n".join(out)
+
+
+def _sparks(x, y, n, spread, delay, unit="px", seed=0):
+    """Each spark sits on a rotated ray and flies outward along it (no CSS variables needed)."""
+    out = []
+    for i in range(n):
+        target = spread * (0.65 + 0.35 * ((i * 7 + seed) % 5) / 4)
+        d = min(SPARK_DIST, key=lambda v: abs(v - target))
+        out.append(f"<span class='fx-ray' style='left:{x}{unit};top:{y}{unit};transform:rotate({i / n * 360:.0f}deg)'>"
+                   f"<i class='fx-spark d{d}' style='background:{FESTIVE_COLORS[(i + seed) % len(FESTIVE_COLORS)]};"
+                   f"animation-delay:{delay}s'></i></span>")
+    return "".join(out)
+
+
+def festive_decor():
+    bulb_colors = ["#FFC93C", "#FF7A59", "#F5E1A4", "#E86FA8"]
+    bulbs = "".join(
+        f"<span class='fx-bulb' style='left:{i / 23 * 100:.1f}%;top:{6 + 22 * _m.sin(i / 23 * _m.pi):.0f}px;"
+        f"background:{bulb_colors[i % 4]};animation-delay:{(i % 2) * .8}s'></span>" for i in range(24))
+    diyas = "".join(f"<div class='fx-diya'><div class='fx-flame' style='animation-delay:{i * .3:.1f}s'></div>"
+                    f"<div class='fx-lamp'></div></div>" for i in range(9))
+    spots = [(22, 26), (76, 20), (58, 44), (34, 40)]
+    bursts = "".join(_sparks(x, y, 22, 70, k * 5 + 1, "%", seed=k) for k, (x, y) in enumerate(spots))
+    return (f"<div class='fx fx-toran'><div class='fx-string'></div>{bulbs}</div>"
+            f"<div class='fx fx-mari' style='top:-16px;left:-16px'></div>"
+            f"<div class='fx fx-mari' style='top:-16px;right:-16px;animation-direction:reverse'></div>"
+            f"<div class='fx fx-bg' style='inset:0'>{bursts}</div>"
+            f"<div class='fx fx-diyas'>{diyas}</div>")
+
+
+def celebration():
+    """Three bursts around the stamp, played once when a vendor is approved."""
+    return ("<span class='vg-celebrate'>" + _sparks(50, 50, 24, 90, .35, "%", 0)
+            + _sparks(15, 30, 18, 70, .6, "%", 2) + _sparks(85, 30, 18, 70, .85, "%", 4) + "</span>")
+
+
+FESTIVE_CSS = FESTIVE_CSS_TEMPLATE.replace("__SPARK_KEYFRAMES__", _spark_keyframes())
