@@ -59,3 +59,26 @@ def update_email(run_id: str, email: str):
         with _conn() as c:
             c.execute("UPDATE runs SET result = ? WHERE id = ?",
                       (json.dumps(run["result"]), run_id))
+
+
+REVIEW_OUTCOMES = {"approve": ("Approved", "Approved by reviewer"),
+                   "request": ("Pending", "Vendor action"),
+                   "reject": ("Rejected", "Rejected by reviewer")}
+
+
+def apply_review(run_id: str, review: dict, vendor_email: str):
+    """Record a reviewer's decision on an internal-review case. The automated
+    decision is kept alongside it so the audit trail shows both."""
+    run = get(run_id)
+    res = run["result"]
+    d = res["decision"]
+    res["auto_decision"] = {"status": d["status"], "route": d["route"], "reasons": list(d["reasons"])}
+    status, route = REVIEW_OUTCOMES[review["decision"]]
+    d["status"], d["route"] = status, route
+    d["reasons"] = [f"Reviewer {review['by']}: {review['reason']}"] + d["reasons"]
+    d["vendor_email"], d["email_polished"] = vendor_email, False
+    d["internal_summary"] = f"{run['vendor']}: {status} ({route}) after manual review."
+    res["review"] = review
+    with _conn() as c:
+        c.execute("UPDATE runs SET status = ?, route = ?, result = ? WHERE id = ?",
+                  (status, route, json.dumps(res), run_id))

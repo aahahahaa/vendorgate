@@ -87,6 +87,14 @@ CSS = """
 .vg-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .vg-pill{font-family:var(--vg-mono);font-size:.68rem;letter-spacing:.06em;border:1px solid var(--vg-border);border-radius:999px;padding:3px 9px;color:var(--vg-muted)}
 
+.vg-hint{font-size:.78rem;margin:-.55rem 0 .7rem;display:flex;gap:6px;align-items:baseline;line-height:1.4}
+.vg-hint.ok{color:#7FA6FF}.vg-hint.warn{color:var(--vg-warn)}.vg-hint.bad{color:var(--vg-bad)}
+.vg-fill-note{font-family:var(--vg-mono);font-size:.72rem;color:var(--vg-accent);border:1px solid rgba(91,140,255,.35);
+  background:rgba(91,140,255,.08);border-radius:8px;padding:6px 10px;margin:0 0 .8rem;animation:vg-rise .35s ease-out}
+.vg-review{background:var(--vg-card);border:1px solid rgba(251,146,60,.45);border-radius:14px;padding:14px 18px;margin:.4rem 0 .8rem}
+.vg-review h4{margin:0 0 4px;font-size:1rem}.vg-review p{color:var(--vg-muted);font-size:.86rem;margin:0}
+.vg-reviewed{font-size:.84rem;color:var(--vg-muted);margin:10px 0 0;border-top:1px solid var(--vg-border);padding-top:10px}
+.vg-reviewed b{color:var(--vg-text)}
 @keyframes vg-ping{0%{transform:scale(1);opacity:.75}100%{transform:scale(2.5);opacity:0}}
 @keyframes vg-blink{0%,100%{opacity:1}50%{opacity:.25}}
 @keyframes vg-rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
@@ -199,3 +207,19 @@ def counts(stages):
              ("for review", sev.count("review")), ("blocking", sev.count("block"))]
     return "<div class='vg-counts'>" + "".join(
         f"<span class='vg-pill'>{n} {label}</span>" for label, n in parts if n or label == "passed") + "</div>"
+
+
+HINT_ICON = {"ok": "✓", "warn": "!", "bad": "✕"}
+
+
+def hint(kind, msg):
+    if not kind:
+        return ""
+    return f"<div class='vg-hint {kind}'><span>{HINT_ICON[kind]}</span><span>{escape(msg)}</span></div>"
+
+
+def reviewed_note(review, auto):
+    verb = {"approve": "approved", "request": "sent back to the vendor", "reject": "rejected"}[review["decision"]]
+    return (f"<div class='vg-reviewed'>Reviewed by <b>{escape(review['by'])}</b> · {verb}<br>"
+            f"“{escape(review['reason'])}”<br>Automated result was {escape(auto['status'])} "
+            f"({escape(auto['route'])})</div>")
