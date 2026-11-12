@@ -3,6 +3,7 @@ It never decides a status. Every call has a fallback so the app never crashes.""
 import base64
 import json
 import re
+import time
 
 import requests
 
@@ -37,16 +38,39 @@ MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg",
         "jpeg": "image/jpeg", "webp": "image/webp"}
 
 
-def _post(parts, key, model, json_mode, timeout=60):
-    body = {"contents": [{"parts": parts}],
-            "generationConfig": {"temperature": 0}}
+FALLBACK_MODEL = None          # optional second model, set from secrets by the app
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+FRIENDLY = {429: "rate limit reached", 500: "server error", 502: "server error",
+            503: "model busy (high demand)", 504: "timed out"}
+
+
+def _post_once(parts, key, model, json_mode, timeout):
+    body = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0}}
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
     r = requests.post(API.format(model=model), json=body, timeout=timeout,
                       headers={"x-goog-api-key": key})  # header, so the key never appears in error text
-    if r.status_code != 200:
-        raise RuntimeError(f"Gemini returned {r.status_code}: {r.text[:160]}")
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    return r
+
+
+def _post(parts, key, model, json_mode, timeout=60, attempts=3):
+    """Retries busy/overloaded responses with backoff, then tries the fallback model once."""
+    last = None
+    for m in [model] + ([FALLBACK_MODEL] if FALLBACK_MODEL and FALLBACK_MODEL != model else []):
+        for i in range(attempts):
+            try:
+                r = _post_once(parts, key, m, json_mode, timeout)
+            except requests.RequestException:
+                last = "network error"
+                time.sleep(2 ** i)
+                continue
+            if r.status_code == 200:
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            last = f"{FRIENDLY.get(r.status_code, 'error')} ({r.status_code})"
+            if r.status_code not in RETRY_STATUSES:
+                raise RuntimeError(f"Gemini {last}")
+            time.sleep(2 ** i)
+    raise RuntimeError(f"Gemini unavailable: {last}, retried {attempts}x")
 
 
 def _clean(field, value):
